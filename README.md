@@ -1,4 +1,4 @@
-# 🎯 Campus Drive Portal — Recruiter & Student AI Resume Screening
+# 🎯 SmartHire AI — Recruiter & Student AI Resume Screening
 
 A full-stack platform where **recruiters** post company drives (internship/full-time openings)
 and **students** apply directly with their resume. Recruiters can then click **Analyze** to have
