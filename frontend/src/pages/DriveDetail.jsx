@@ -16,6 +16,7 @@ export default function DriveDetail() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [failures, setFailures] = useState([]);
   const [minScore, setMinScore] = useState(70);
 
   const load = async () => {
@@ -41,16 +42,17 @@ export default function DriveDetail() {
   const handleAnalyze = async () => {
     setError('');
     setMessage('');
+    setFailures([]);
     setAnalyzing(true);
     try {
       const res = await api.post(`/drives/${id}/analyze`);
       setApplications(res.data.applications);
       setMessage(res.data.message);
+      setFailures(res.data.failures || []);
     } catch (err) {
       setError(
-        err.response?.data?.message === undefined
-          ? 'Analysis failed'
-          : err.response.data.message
+        err.response?.data?.message ||
+          (err.request ? 'Could not reach the server. If it was idle, wait a minute and try again.' : 'Analysis failed')
       );
     } finally {
       setAnalyzing(false);
@@ -108,6 +110,18 @@ export default function DriveDetail() {
 
       {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm">{error}</div>}
       {message && <div className="bg-green-100 text-green-700 p-3 rounded mb-4 text-sm">{message}</div>}
+      {failures.length > 0 && (
+        <div className="bg-yellow-50 text-yellow-800 p-3 rounded mb-4 text-sm">
+          <p className="font-medium mb-1">{failures.length} resume(s) could not be analyzed:</p>
+          <ul className="list-disc ml-5">
+            {failures.map((f, i) => (
+              <li key={i}>
+                {f.name}: {f.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="bg-white p-6 rounded-xl shadow-md mb-6 flex flex-wrap gap-4 items-center justify-between">
         <p className="text-sm text-gray-500">
