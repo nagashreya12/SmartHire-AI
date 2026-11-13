@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const { encrypt } = require('../utils/crypto');
+const { testGroqKey } = require('../utils/groqClient');
 
 // Check whether the logged-in user has a Groq key saved (never returns the key itself)
 router.get('/api-key/status', auth, async (req, res) => {
@@ -31,19 +31,17 @@ router.put('/api-key', auth, async (req, res) => {
   }
 });
 
-// Test a key against Groq before saving (optional convenience endpoint)
+// Test a key against Groq before saving. Makes a tiny real request, so it also confirms
+// that at least one currently-available model works with this key.
 router.post('/api-key/test', auth, async (req, res) => {
   try {
     const { apiKey } = req.body;
-    if (!apiKey) return res.status(400).json({ message: 'API key is required' });
+    if (!apiKey || !apiKey.trim()) return res.status(400).json({ message: 'API key is required' });
 
-    await axios.get('https://api.groq.com/openai/v1/models', {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      timeout: 10000
-    });
-    res.json({ valid: true, message: 'Key is valid' });
+    const model = await testGroqKey(apiKey.trim());
+    res.json({ valid: true, message: `Key is valid (model: ${model})` });
   } catch (err) {
-    res.status(400).json({ valid: false, message: 'Key test failed. Please check the key and try again.' });
+    res.status(400).json({ valid: false, message: `Key test failed: ${err.message}` });
   }
 });
 
