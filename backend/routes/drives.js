@@ -113,7 +113,15 @@ router.post('/:id/analyze', auth, requireRole('recruiter'), async (req, res) => 
     if (!user.groqApiKey) {
       return res.status(400).json({ message: 'Please add your Groq API key in Settings before analyzing.' });
     }
-    const apiKey = decrypt(user.groqApiKey);
+
+    let apiKey;
+    try {
+      apiKey = decrypt(user.groqApiKey);
+    } catch (decryptErr) {
+      return res.status(400).json({
+        message: 'Your saved Groq API key could not be read (the server ENCRYPTION_KEY may have changed). Please re-save your key in Settings.'
+      });
+    }
 
     const applications = await Application.find({ drive: drive._id });
     if (applications.length === 0) {
@@ -121,20 +129,41 @@ router.post('/:id/analyze', auth, requireRole('recruiter'), async (req, res) => 
     }
 
     let successCount = 0;
-    for (const application of applications) {
-      try {
-        const scored = await scoreApplicationForDrive(apiKey, application.extractedText, drive);
-        application.atsScore = scored.atsScore;
-        application.matchedSkills = scored.matchedSkills || [];
-        application.missingSkills = scored.missingSkills || [];
-        application.suggestions = scored.suggestions || [];
-        application.analyzedAt = new Date();
-        await application.save();
-        successCount++;
-      } catch (innerErr) {
-        // Keep going even if one candidate's analysis fails (e.g. transient rate limit)
-        console.error(`Failed to analyze application ${application._id}:`, innerErr.message);
+    const failures = []; // { name, reason }
+    let fatalError = null; // e.g. invalid API key - stop immediately
+
+    // Small worker pool (3 at a time) so many applicants don't make the request too slow
+    const CONCURRENCY = 3;
+    let index = 0;
+    const worker = async () => {
+      while (index < applications.length && !fatalError) {
+        const application = applications[index++];
+        try {
+          const scored = await scoreApplicationForDrive(apiKey, application.extractedText, drive);
+          application.atsScore = scored.atsScore;
+          application.matchedSkills = scored.matchedSkills;
+          application.missingSkills = scored.missingSkills;
+          application.suggestions = scored.suggestions;
+          application.analyzedAt = new Date();
+          await application.save();
+          successCount++;
+        } catch (innerErr) {
+          console.error(`Failed to analyze application ${application._id}:`, innerErr.message);
+          if (innerErr.kind === 'auth') fatalError = innerErr;
+          failures.push({ name: application.name, reason: innerErr.message });
+        }
       }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, applications.length) }, worker));
+
+    if (fatalError) {
+      return res.status(400).json({ message: fatalError.message });
+    }
+
+    // Nothing worked: report the REAL reason instead of a fake "success" message
+    if (successCount === 0) {
+      const reasons = [...new Set(failures.map((f) => f.reason))].join(' | ');
+      return res.status(502).json({ message: `Analysis failed for all ${applications.length} application(s). ${reasons}` });
     }
 
     const sorted = await Application.find({ drive: drive._id })
@@ -143,14 +172,10 @@ router.post('/:id/analyze', auth, requireRole('recruiter'), async (req, res) => 
 
     res.json({
       message: `Analyzed ${successCount} of ${applications.length} applications`,
+      failures,
       applications: sorted
     });
   } catch (err) {
-    if (err.response) {
-      return res.status(err.response.status || 500).json({
-        message: err.response.data?.error?.message || 'Groq API error. Please check your API key.'
-      });
-    }
     res.status(500).json({ message: err.message });
   }
 });
